@@ -23,7 +23,26 @@ export function parseProjectSession(raw: string): ProjectSession | null {
   } catch {
     return null;
   }
+  migrateBookmarksInPlace(data);
   return isProjectSession(data) ? data : null;
+}
+
+// Saves from before bookmarks were anchored to a real time-of-day only have
+// a raw `timeSeconds` (relative to whichever clip anchored the timeline at
+// save time). That anchor isn't recoverable here, so migrated bookmarks
+// fall back to that old relative position rather than a real time-of-day —
+// same as a bookmark created with no anchor available at all.
+function migrateBookmarksInPlace(data: unknown): void {
+  if (typeof data !== "object" || data === null) return;
+  const d = data as Record<string, unknown>;
+  if (!Array.isArray(d.bookmarks)) return;
+  d.bookmarks = d.bookmarks.map((value) => {
+    if (typeof value !== "object" || value === null) return value;
+    const b = value as Record<string, unknown>;
+    if ("timeOfDaySeconds" in b) return b;
+    if (typeof b.timeSeconds !== "number") return b;
+    return { id: b.id, label: b.label, timeOfDaySeconds: null, fallbackTimeSeconds: b.timeSeconds };
+  });
 }
 
 const VIEW_MODES: ViewMode[] = ["grid", "focus1", "focus2", "dynamic"];
@@ -52,7 +71,12 @@ function isProjectSession(data: unknown): data is ProjectSession {
 function isBookmark(value: unknown): value is Bookmark {
   if (typeof value !== "object" || value === null) return false;
   const b = value as Record<string, unknown>;
-  return typeof b.id === "string" && typeof b.timeSeconds === "number" && typeof b.label === "string";
+  return (
+    typeof b.id === "string" &&
+    (typeof b.timeOfDaySeconds === "number" || b.timeOfDaySeconds === null) &&
+    typeof b.fallbackTimeSeconds === "number" &&
+    typeof b.label === "string"
+  );
 }
 
 function isLoopRegion(value: unknown): value is { start: number; end: number } {

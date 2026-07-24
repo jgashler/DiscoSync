@@ -16,8 +16,18 @@ export function parseTimeOfDay(value: string): number | null {
   return hours * 3600 + minutes * 60 + seconds;
 }
 
+/**
+ * Normalizes a seconds-in-day value that may be negative or >= 24h (e.g.
+ * an anchor time-of-day plus an arbitrary timeline offset) back onto
+ * [0, 24h). Kept separate from formatTimeOfDay so callers that need the
+ * numeric value can avoid a lossy round-trip through a floored string.
+ */
+export function normalizeTimeOfDaySeconds(totalSeconds: number): number {
+  return ((totalSeconds % SECONDS_PER_DAY) + SECONDS_PER_DAY) % SECONDS_PER_DAY;
+}
+
 export function formatTimeOfDay(totalSeconds: number): string {
-  const normalized = ((totalSeconds % SECONDS_PER_DAY) + SECONDS_PER_DAY) % SECONDS_PER_DAY;
+  const normalized = normalizeTimeOfDaySeconds(totalSeconds);
   const h = Math.floor(normalized / 3600);
   const m = Math.floor((normalized % 3600) / 60);
   const s = Math.floor(normalized % 60);

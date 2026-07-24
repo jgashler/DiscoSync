@@ -37,9 +37,26 @@ export type ViewMode = "grid" | "focus1" | "focus2" | "dynamic";
 // A user-marked moment of interest on the shared review timeline (e.g.
 // "incident starts here"), so a repeat review session can jump straight
 // back to it instead of re-scrubbing to find it.
+//
+// Anchored to a real-world time-of-day rather than a raw timeline offset:
+// the timeline's own coordinate system is anchored to whichever loaded
+// clip currently starts earliest, which can change (e.g. a clip starting
+// before the current earliest one gets added later) and would otherwise
+// silently shift every bookmark's position. timeOfDaySeconds is the
+// source of truth; a bookmark's position on the current timeline is always
+// re-derived from it (see bookmarkTimelineSeconds in lib/bookmarks.ts).
 export interface Bookmark {
   id: string;
-  timeSeconds: number;
+  /** Real-world time-of-day (seconds since midnight) this bookmark marks. */
+  timeOfDaySeconds: number | null;
+  /**
+   * Timeline position at creation time. Used directly only when
+   * timeOfDaySeconds is null — i.e. no clip had a usable start time-of-day
+   * yet (a single untimed clip), so there's no anchor to derive a real
+   * time-of-day from. Otherwise kept only as a migration fallback for
+   * bookmarks saved before timeOfDaySeconds existed.
+   */
+  fallbackTimeSeconds: number;
   label: string;
 }
 

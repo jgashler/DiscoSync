@@ -33,7 +33,7 @@ function makeClip(overrides: Partial<VideoClip> = {}): VideoClip {
 }
 
 function makeBookmark(overrides: Partial<Bookmark> = {}): Bookmark {
-  return { id: "bm-1", timeSeconds: 42, label: "Incident starts here", ...overrides };
+  return { id: "bm-1", timeOfDaySeconds: 36042, fallbackTimeSeconds: 42, label: "Incident starts here", ...overrides };
 }
 
 describe("serializeProjectSession / parseProjectSession round trip", () => {
@@ -93,7 +93,10 @@ describe("serializeProjectSession / parseProjectSession round trip", () => {
 
   it("round-trips bookmarks", () => {
     const clips = [makeClip()];
-    const bookmarks = [makeBookmark(), makeBookmark({ id: "bm-2", timeSeconds: 90, label: "Second angle arrives" })];
+    const bookmarks = [
+      makeBookmark(),
+      makeBookmark({ id: "bm-2", timeOfDaySeconds: 36090, fallbackTimeSeconds: 90, label: "Second angle arrives" }),
+    ];
     const raw = serializeProjectSession("Case", clips, "grid", [], bookmarks);
     const parsed = parseProjectSession(raw);
     expect(parsed).toEqual({
@@ -186,9 +189,24 @@ describe("parseProjectSession backward compatibility", () => {
   });
 
   it("rejects a bookmark with the wrong field types", () => {
-    const badBookmark = { ...makeBookmark(), timeSeconds: "42" };
+    const badBookmark = { ...makeBookmark(), fallbackTimeSeconds: "42" };
     const raw = JSON.stringify({ version: 1, name: "x", clips: [], bookmarks: [badBookmark] });
     expect(parseProjectSession(raw)).toBeNull();
+  });
+
+  it("migrates a bookmark saved before real time-of-day anchoring existed", () => {
+    // Older saves only had a raw `timeSeconds`, relative to whichever clip
+    // anchored the timeline at save time. That anchor isn't recoverable,
+    // so it's migrated to the fallback-only shape rather than a real
+    // time-of-day.
+    const oldBookmark = { id: "bm-1", timeSeconds: 42, label: "Incident starts here" };
+    const raw = JSON.stringify({ version: 1, name: "Old", clips: [], bookmarks: [oldBookmark] });
+    expect(parseProjectSession(raw)).toEqual({
+      version: 1,
+      name: "Old",
+      clips: [],
+      bookmarks: [{ id: "bm-1", timeOfDaySeconds: null, fallbackTimeSeconds: 42, label: "Incident starts here" }],
+    });
   });
 
   it("accepts a file saved before playback state existed", () => {

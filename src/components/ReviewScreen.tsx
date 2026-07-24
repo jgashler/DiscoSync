@@ -32,7 +32,8 @@ import { formatSecondsShort } from "../lib/formatSeconds";
 import { globalFrameStepSeconds } from "../lib/fineTune";
 import { computeTimelineAnchorSeconds, timelineTimeOfDay } from "../lib/timelineClock";
 import { resolveFocusedClipIds, swapFocusedClipId } from "../lib/focusLayout";
-import { addBookmark, removeBookmark, renameBookmark } from "../lib/bookmarks";
+import { addBookmark, bookmarkTimelineSeconds, removeBookmark, renameBookmark, sortBookmarks } from "../lib/bookmarks";
+import { formatTimeOfDay, normalizeTimeOfDaySeconds } from "../lib/timeOfDay";
 import { timelineMarkerPercent } from "../lib/timelinePosition";
 import { clampLoopRegion, normalizeLoopRegion, resizeLoopRegion, shouldWrapLoop } from "../lib/loopRange";
 import type { LoopRegion } from "../lib/loopRange";
@@ -628,10 +629,24 @@ export function ReviewScreen({
   );
   const clockDisplay = timelineTimeOfDay(timelineAnchorSeconds, globalTime);
 
+  // Bookmarks are re-sorted (and their positions re-derived) against the
+  // CURRENT anchor on every render rather than stored pre-sorted, since the
+  // anchor — and thus what "chronological order" even means — can shift
+  // whenever clips are added or removed.
+  const sortedBookmarks = useMemo(
+    () => sortBookmarks(bookmarks, timelineAnchorSeconds),
+    [bookmarks, timelineAnchorSeconds],
+  );
+
   function handleAddBookmark() {
     const label = timelineTimeOfDay(timelineAnchorSeconds, globalTime) ?? formatSecondsShort(globalTime);
     const id = crypto.randomUUID();
-    onBookmarksChange(addBookmark(bookmarks, { id, timeSeconds: globalTime, label }));
+    // Captured as a real time-of-day (when an anchor is available) so this
+    // bookmark keeps pointing at the same moment even if the anchor clip
+    // later changes — see the Bookmark type and lib/bookmarks.ts.
+    const timeOfDaySeconds =
+      timelineAnchorSeconds !== null ? normalizeTimeOfDaySeconds(timelineAnchorSeconds + globalTime) : null;
+    onBookmarksChange(addBookmark(bookmarks, { id, timeOfDaySeconds, fallbackTimeSeconds: globalTime, label }));
     // Open straight into the rename field with the auto-generated label
     // pre-filled and selected — naming it is one keystroke away, but
     // clicking off (or just leaving the menu open) keeps the default.
@@ -1074,7 +1089,7 @@ export function ReviewScreen({
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setBookmarksMenuOpen(false)} />
                   <div className="absolute left-0 bottom-full mb-1 w-64 bg-neutral-900 border border-neutral-800 rounded-md shadow-xl z-50 p-1 max-h-72 overflow-y-auto">
-                    {bookmarks.map((b) => (
+                    {sortedBookmarks.map((b) => (
                       <div key={b.id} className="flex items-center gap-1">
                         {renamingBookmarkId === b.id ? (
                           <input
@@ -1093,13 +1108,15 @@ export function ReviewScreen({
                           />
                         ) : (
                           <button
-                            onClick={() => handleJumpToBookmark(b.timeSeconds)}
+                            onClick={() => handleJumpToBookmark(bookmarkTimelineSeconds(b, timelineAnchorSeconds))}
                             title="Jump to this bookmark"
                             className="flex-1 min-w-0 flex items-center justify-between gap-3 rounded px-2 py-1.5 text-sm hover:bg-neutral-800 transition-colors text-left"
                           >
                             <span className="truncate">{b.label}</span>
                             <span className="text-neutral-500 text-xs shrink-0 tabular-nums">
-                              {formatSecondsShort(b.timeSeconds)}
+                              {b.timeOfDaySeconds !== null
+                                ? formatTimeOfDay(b.timeOfDaySeconds)
+                                : formatSecondsShort(bookmarkTimelineSeconds(b, timelineAnchorSeconds))}
                             </span>
                           </button>
                         )}
@@ -1221,15 +1238,23 @@ export function ReviewScreen({
             </>
           )}
           <div className="absolute inset-x-0 top-1/2 pointer-events-none">
-            {bookmarks.map((b) => (
-              <button
-                key={b.id}
-                onClick={() => handleJumpToBookmark(b.timeSeconds)}
-                title={b.label}
-                style={{ left: `${timelineMarkerPercent(b.timeSeconds, timelineStart, timelineEnd)}%` }}
-                className="absolute -translate-x-1/2 -translate-y-1/2 w-0.5 h-3 bg-amber-400 hover:bg-amber-300 hover:h-4 pointer-events-auto cursor-pointer rounded-full transition-[height]"
-              />
-            ))}
+            {sortedBookmarks
+              .map((b) => ({ bookmark: b, timeSeconds: bookmarkTimelineSeconds(b, timelineAnchorSeconds) }))
+              // A bookmark whose real moment currently falls outside the
+              // visible/trimmed timeline just isn't shown as a marker — it
+              // stays saved and reappears once the range expands to cover
+              // it again (e.g. after adding more clips), rather than being
+              // clamped to a misleading position at the edge or discarded.
+              .filter(({ timeSeconds }) => timeSeconds >= timelineStart && timeSeconds <= timelineEnd)
+              .map(({ bookmark: b, timeSeconds }) => (
+                <button
+                  key={b.id}
+                  onClick={() => handleJumpToBookmark(timeSeconds)}
+                  title={b.label}
+                  style={{ left: `${timelineMarkerPercent(timeSeconds, timelineStart, timelineEnd)}%` }}
+                  className="absolute -translate-x-1/2 -translate-y-1/2 w-0.5 h-3 bg-amber-400 hover:bg-amber-300 hover:h-4 pointer-events-auto cursor-pointer rounded-full transition-[height]"
+                />
+              ))}
           </div>
         </div>
         <span className="text-sm text-neutral-400 tabular-nums w-12">{formatSecondsShort(timelineDuration)}</span>
