@@ -136,3 +136,34 @@ export interface VideoMetadata {
 export async function probeVideoMetadata(path: string): Promise<VideoMetadata> {
   return invoke<VideoMetadata>("probe_video_metadata", { path });
 }
+
+export interface AudioSyncClipInput {
+  id: string;
+  path: string;
+  currentOffsetSeconds: number;
+}
+
+export type AudioSyncOutcome =
+  | { status: "suggested"; offsetSeconds: number; confidence: number }
+  | { status: "failed"; error: string };
+
+/**
+ * For each clip in `candidates`, suggests an offset (in the same coordinate
+ * space as `currentOffsetSeconds`) that best aligns its audio with
+ * `anchor`'s, decoded and correlated entirely locally — no network access.
+ * Searches within `searchWindowSeconds` of each clip's current offset
+ * relative to the anchor, since this refines an already-rough-synced
+ * position rather than searching blind. Never modifies any clip's offset
+ * itself — the caller applies (and can revert) the suggestion.
+ */
+export async function suggestAudioSyncOffsets(
+  anchor: AudioSyncClipInput,
+  candidates: AudioSyncClipInput[],
+  searchWindowSeconds: number,
+): Promise<Record<string, AudioSyncOutcome>> {
+  return invoke<Record<string, AudioSyncOutcome>>("suggest_audio_sync_offsets", {
+    anchor,
+    candidates,
+    searchWindowSeconds,
+  });
+}

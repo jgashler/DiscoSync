@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import {
   ArrowLeft,
+  AudioWaveform,
   Bookmark as BookmarkIcon,
   ChevronDown,
   Columns2,
   HelpCircle,
   LayoutDashboard,
   LayoutGrid,
+  Loader2,
   Maximize2,
   Pause,
   Pencil,
@@ -23,7 +25,8 @@ import { VideoGrid } from "./VideoGrid";
 import { FocusLayout } from "./FocusLayout";
 import { DynamicGridLayout } from "./DynamicGridLayout";
 import { clampVolume } from "../lib/audio";
-import { openHelpWindow } from "../lib/native";
+import { openHelpWindow, suggestAudioSyncOffsets } from "../lib/native";
+import type { AudioSyncOutcome } from "../lib/native";
 import { reorderClips } from "../lib/reorder";
 import { formatSecondsShort } from "../lib/formatSeconds";
 import { globalFrameStepSeconds } from "../lib/fineTune";
@@ -36,6 +39,13 @@ import type { LoopRegion } from "../lib/loopRange";
 import type { Bookmark, ClipZoomState, PlaybackSnapshot, ViewMode, VideoClip } from "../types/project";
 
 const SKIP_SECONDS = 10;
+
+// How far from each clip's *current* effective offset the audio-sync
+// search is allowed to move it. This is a refinement of an already
+// roughly-synced position (from entered timestamps, possibly hand-nudged),
+// not a blind search across the whole file — a wide window would risk
+// locking onto a spurious match far from where the user placed it.
+const AUDIO_SYNC_SEARCH_WINDOW_SECONDS = 30;
 
 // "crawl" isn't a native HTML5 playbackRate — for a typical 30fps clip that
 // would be ~0.033x, below what browsers can decode/play smoothly (audio
@@ -143,6 +153,19 @@ export function ReviewScreen({
     setZoomByClip((prev) => ({ ...prev, [clipId]: next }));
   }
 
+  // Opt-in, human-gated audio sync suggestion (see CLAUDE.md's "Audio Sync
+  // Suggestion" note): decoding and correlating audio happens entirely
+  // locally in Rust and never modifies a clip's offset by itself — running
+  // it applies the suggestion provisionally and remembers what was there
+  // before, so the user can compare the result and keep or revert it,
+  // exactly like any other manual offset edit.
+  const [isSyncingAudio, setIsSyncingAudio] = useState(false);
+  const [audioSyncError, setAudioSyncError] = useState<string | null>(null);
+  const [audioSyncReview, setAudioSyncReview] = useState<{
+    previousOffsets: Record<string, number>;
+    outcomes: Record<string, AudioSyncOutcome>;
+  } | null>(null);
+
   // Total effective offset per clip: rough sync + manual fine-tune. Clips
   // without a valid rough-sync offset (no/invalid timestamp) are left out
   // entirely — they must NOT fall back to 0, which would silently line
@@ -168,16 +191,94 @@ export function ReviewScreen({
     return effectiveOffsets[clip.id] !== undefined;
   }
 
-  const timelineDuration = useMemo(() => {
-    let max = 0;
+  async function handleSyncByAudio() {
+    const syncedClips = clips.filter(isSynced);
+    if (syncedClips.length < 2) return;
+
+    // The earliest-starting clip anchors the correlation — every other
+    // clip's offset is suggested relative to it. Its own offset is never
+    // changed; there's nothing to compare it against.
+    const anchorClip = syncedClips.reduce((earliest, c) =>
+      effectiveOffsets[c.id] < effectiveOffsets[earliest.id] ? c : earliest,
+    );
+    const candidateClips = syncedClips.filter((c) => c.id !== anchorClip.id);
+
+    setIsSyncingAudio(true);
+    setAudioSyncError(null);
+    try {
+      const outcomes = await suggestAudioSyncOffsets(
+        { id: anchorClip.id, path: anchorClip.filePath, currentOffsetSeconds: effectiveOffsets[anchorClip.id] },
+        candidateClips.map((c) => ({
+          id: c.id,
+          path: c.filePath,
+          currentOffsetSeconds: effectiveOffsets[c.id],
+        })),
+        AUDIO_SYNC_SEARCH_WINDOW_SECONDS,
+      );
+
+      const previousOffsets = Object.fromEntries(clips.map((c) => [c.id, c.manualOffsetSeconds]));
+
+      setClips((prev) =>
+        prev.map((c) => {
+          const outcome = outcomes[c.id];
+          if (!outcome || outcome.status !== "suggested") return c;
+          // manualOffsetSeconds sits on top of rough sync — back it out of
+          // the suggested absolute offset so the effective offset lands
+          // exactly where the suggestion says.
+          const roughOffset = syncOffsets[c.id] ?? 0;
+          return { ...c, manualOffsetSeconds: outcome.offsetSeconds - roughOffset };
+        }),
+      );
+
+      setAudioSyncReview({ previousOffsets, outcomes });
+    } catch (e) {
+      setAudioSyncError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsSyncingAudio(false);
+    }
+  }
+
+  function handleKeepAudioSync() {
+    setAudioSyncReview(null);
+  }
+
+  function handleRevertAudioSync() {
+    if (!audioSyncReview) return;
+    const { previousOffsets } = audioSyncReview;
+    setClips((prev) =>
+      prev.map((c) => (previousOffsets[c.id] !== undefined ? { ...c, manualOffsetSeconds: previousOffsets[c.id] } : c)),
+    );
+    setAudioSyncReview(null);
+  }
+
+  // Trimmed to the union of clips' active windows — [earliest clip start,
+  // latest clip end] — rather than always starting at 0. Nudging clips with
+  // bad/mismatched rough-sync timestamps into their true alignment can leave
+  // a large stretch at either end where every clip is simultaneously
+  // out-of-range; there's nothing to scrub to there, so it's cut from the
+  // bar rather than shown as dead space. timelineStart can be negative (a
+  // clip nudged earlier than the rough-sync anchor) — it's not always 0.
+  const { timelineStart, timelineDuration } = useMemo(() => {
+    let start = 0;
+    let end = 0;
+    let any = false;
     for (const clip of clips) {
       if (clip.durationSeconds === null || !isSynced(clip)) continue;
-      const end = effectiveOffsets[clip.id] + clip.durationSeconds;
-      if (end > max) max = end;
+      const clipStart = effectiveOffsets[clip.id];
+      const clipEnd = clipStart + clip.durationSeconds;
+      if (!any) {
+        start = clipStart;
+        end = clipEnd;
+        any = true;
+      } else {
+        if (clipStart < start) start = clipStart;
+        if (clipEnd > end) end = clipEnd;
+      }
     }
-    return max;
+    return { timelineStart: start, timelineDuration: Math.max(end - start, 0) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clips, effectiveOffsets]);
+  const timelineEnd = timelineStart + timelineDuration;
 
   function expectedLocalTime(clip: VideoClip, atGlobalTime: number): number {
     const local = atGlobalTime - effectiveOffsets[clip.id];
@@ -196,11 +297,16 @@ export function ReviewScreen({
 
   // Re-seek immediately whenever an offset changes (nudge or numeric edit),
   // whether playing or paused, so fine-tuning is reflected live rather than
-  // waiting for the next periodic drift check.
+  // waiting for the next periodic drift check. Also re-clamps globalTime
+  // into the (possibly just-shifted) trimmed timeline bounds — nudging a
+  // clip into sync can move timelineStart/timelineEnd out from under the
+  // current position.
   useEffect(() => {
-    seekAllTo(globalTime);
+    const clamped = Math.min(Math.max(globalTime, timelineStart), timelineEnd);
+    if (clamped !== globalTime) setGlobalTime(clamped);
+    seekAllTo(clamped);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveOffsets]);
+  }, [effectiveOffsets, timelineStart, timelineEnd]);
 
   // Volume isn't a React-controllable DOM attribute (only `muted` is), so
   // it has to be applied to the element imperatively whenever it changes.
@@ -254,12 +360,12 @@ export function ReviewScreen({
       for (const clip of clips) videoRefs.current.get(clip.id)?.pause();
       const step = globalFrameStepSeconds(clips.map((c) => c.frameRate));
       const intervalId = setInterval(() => {
-        let next = Math.min(clockRef.current.startGlobalTime + step, timelineDuration);
+        let next = Math.min(clockRef.current.startGlobalTime + step, timelineEnd);
         if (loopEnabled && loopRegion && shouldWrapLoop(next, loopRegion)) next = loopRegion.start;
         clockRef.current = { startPerfMs: performance.now(), startGlobalTime: next };
         setGlobalTime(next);
         seekAllTo(next);
-        if (next >= timelineDuration) setIsPlaying(false);
+        if (next >= timelineEnd) setIsPlaying(false);
       }, 1000);
       return () => clearInterval(intervalId);
     }
@@ -284,8 +390,8 @@ export function ReviewScreen({
         seekAllTo(current);
       }
 
-      if (current >= timelineDuration) {
-        setGlobalTime(timelineDuration);
+      if (current >= timelineEnd) {
+        setGlobalTime(timelineEnd);
         setIsPlaying(false);
         for (const clip of clips) videoRefs.current.get(clip.id)?.pause();
         return;
@@ -340,7 +446,7 @@ export function ReviewScreen({
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, timelineDuration, playbackSpeed, loopEnabled, loopRegion]);
+  }, [isPlaying, timelineEnd, playbackSpeed, loopEnabled, loopRegion]);
 
   function handlePlayPause() {
     if (isPlaying) {
@@ -349,7 +455,7 @@ export function ReviewScreen({
       return;
     }
 
-    const startAt = globalTime >= timelineDuration ? 0 : globalTime;
+    const startAt = globalTime >= timelineEnd ? timelineStart : globalTime;
     setGlobalTime(startAt);
     seekAllTo(startAt);
     // Crawl mode drives the timeline itself (see the clock effect) rather
@@ -362,7 +468,7 @@ export function ReviewScreen({
   }
 
   function handleScrub(value: number) {
-    const clamped = Math.min(Math.max(value, 0), timelineDuration);
+    const clamped = Math.min(Math.max(value, timelineStart), timelineEnd);
     setGlobalTime(clamped);
     seekAllTo(clamped);
     // Keep the playback clock in sync with the scrub position. Without
@@ -480,9 +586,9 @@ export function ReviewScreen({
 
   function timeFromClientX(clientX: number): number {
     const rect = scrubBarRef.current?.getBoundingClientRect();
-    if (!rect || rect.width === 0) return 0;
+    if (!rect || rect.width === 0) return timelineStart;
     const fraction = (clientX - rect.left) / rect.width;
-    return Math.min(Math.max(fraction, 0), 1) * timelineDuration;
+    return timelineStart + Math.min(Math.max(fraction, 0), 1) * timelineDuration;
   }
 
   // The Loop icon has three states: no region (click arms "set region"
@@ -504,7 +610,7 @@ export function ReviewScreen({
       setLoopPendingStart(time);
       return;
     }
-    setLoopRegion(clampLoopRegion(normalizeLoopRegion(loopPendingStart, time), timelineDuration));
+    setLoopRegion(clampLoopRegion(normalizeLoopRegion(loopPendingStart, time), timelineStart, timelineEnd));
     setLoopEnabled(true);
     setLoopSetupActive(false);
     setLoopPendingStart(null);
@@ -525,7 +631,7 @@ export function ReviewScreen({
   function handleLoopHandlePointerMove(e: { clientX: number }) {
     const edge = loopDragEdgeRef.current;
     if (!edge || !loopRegion) return;
-    setLoopRegion(resizeLoopRegion(loopRegion, edge, timeFromClientX(e.clientX), timelineDuration));
+    setLoopRegion(resizeLoopRegion(loopRegion, edge, timeFromClientX(e.clientX), timelineStart, timelineEnd));
   }
 
   function handleLoopHandlePointerUp(e: { pointerId: number; currentTarget: HTMLElement }) {
@@ -591,6 +697,12 @@ export function ReviewScreen({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  const syncableClipCount = clips.filter(isSynced).length;
+  const audioSyncOutcomes = audioSyncReview ? Object.values(audioSyncReview.outcomes) : [];
+  const audioSyncSuggestedCount = audioSyncOutcomes.filter((o) => o.status === "suggested").length;
+  const audioSyncFailedCount = audioSyncOutcomes.filter((o) => o.status === "failed").length;
+  const audioSyncHasLowConfidence = audioSyncOutcomes.some((o) => o.status === "suggested" && o.confidence < 0.3);
+
   return (
     <div className="h-screen bg-neutral-950 text-neutral-100 flex flex-col overflow-hidden">
       <div className="flex-1 min-h-0 overflow-auto p-6 pb-2 flex flex-col">
@@ -622,6 +734,17 @@ export function ReviewScreen({
           )}
 
           <div className="flex gap-2">
+            {syncableClipCount > 1 && (
+              <button
+                onClick={() => void handleSyncByAudio()}
+                disabled={isSyncingAudio}
+                title="Suggest sync offsets from each clip's audio."
+                className="rounded-md bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-sm transition-colors flex items-center gap-1.5"
+              >
+                {isSyncingAudio ? <Loader2 size={14} className="animate-spin" /> : <AudioWaveform size={14} />}
+                Sync by audio
+              </button>
+            )}
             <button
               onClick={() => void openHelpWindow()}
               title="Help"
@@ -647,6 +770,46 @@ export function ReviewScreen({
             </button>
           </div>
         </div>
+
+        {audioSyncError && (
+          <div className="mb-2 px-3 py-2 rounded-md bg-red-950/40 border border-red-900 text-sm text-red-300 flex items-center justify-between gap-3">
+            <span>Audio sync failed: {audioSyncError}</span>
+            <button
+              onClick={() => setAudioSyncError(null)}
+              title="Dismiss"
+              className="shrink-0 text-red-400 hover:text-red-200"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
+        {audioSyncReview && (
+          <div className="mb-2 px-3 py-2 rounded-md bg-blue-950/40 border border-blue-900 text-sm text-blue-200 flex items-center justify-between gap-3">
+            <span>
+              Audio sync suggested new offsets for {audioSyncSuggestedCount}{" "}
+              {audioSyncSuggestedCount === 1 ? "clip" : "clips"}
+              {audioSyncFailedCount > 0
+                ? ` (${audioSyncFailedCount} couldn't be matched — their offsets weren't changed)`
+                : ""}
+              .{audioSyncHasLowConfidence ? " Some matches were weak — check playback carefully." : ""}
+            </span>
+            <div className="flex gap-2 shrink-0">
+              <button
+                onClick={handleKeepAudioSync}
+                className="rounded-md bg-blue-600 hover:bg-blue-500 px-3 py-1 text-sm transition-colors"
+              >
+                Keep
+              </button>
+              <button
+                onClick={handleRevertAudioSync}
+                className="rounded-md bg-neutral-800 hover:bg-neutral-700 px-3 py-1 text-sm transition-colors"
+              >
+                Revert
+              </button>
+            </div>
+          </div>
+        )}
 
         {isSingleClip && (
           <FocusLayout
@@ -882,8 +1045,8 @@ export function ReviewScreen({
         <div ref={scrubBarRef} className="flex-1 relative flex items-center">
           <input
             type="range"
-            min={0}
-            max={timelineDuration}
+            min={timelineStart}
+            max={timelineEnd}
             step={0.1}
             value={globalTime}
             onChange={(e) => handleScrub(Number(e.target.value))}
@@ -895,8 +1058,8 @@ export function ReviewScreen({
                 loopEnabled ? "bg-blue-500/30" : "bg-neutral-600/30"
               }`}
               style={{
-                left: `${timelineMarkerPercent(loopRegion.start, timelineDuration)}%`,
-                width: `${timelineMarkerPercent(loopRegion.end, timelineDuration) - timelineMarkerPercent(loopRegion.start, timelineDuration)}%`,
+                left: `${timelineMarkerPercent(loopRegion.start, timelineStart, timelineEnd)}%`,
+                width: `${timelineMarkerPercent(loopRegion.end, timelineStart, timelineEnd) - timelineMarkerPercent(loopRegion.start, timelineStart, timelineEnd)}%`,
               }}
             />
           )}
@@ -912,7 +1075,7 @@ export function ReviewScreen({
           )}
           {loopPendingStart !== null && (
             <div
-              style={{ left: `${timelineMarkerPercent(loopPendingStart, timelineDuration)}%` }}
+              style={{ left: `${timelineMarkerPercent(loopPendingStart, timelineStart, timelineEnd)}%` }}
               className="absolute -translate-x-1/2 -translate-y-1/2 top-1/2 w-0.5 h-4 bg-blue-400 pointer-events-none rounded-full"
             />
           )}
@@ -923,7 +1086,7 @@ export function ReviewScreen({
                 onPointerMove={handleLoopHandlePointerMove}
                 onPointerUp={handleLoopHandlePointerUp}
                 title="Drag to adjust the loop start"
-                style={{ left: `${timelineMarkerPercent(loopRegion.start, timelineDuration)}%` }}
+                style={{ left: `${timelineMarkerPercent(loopRegion.start, timelineStart, timelineEnd)}%` }}
                 className="absolute -translate-x-1/2 -translate-y-1/2 top-1/2 w-1.5 h-4 bg-blue-400 hover:bg-blue-300 cursor-ew-resize rounded-full touch-none"
               />
               <div
@@ -931,7 +1094,7 @@ export function ReviewScreen({
                 onPointerMove={handleLoopHandlePointerMove}
                 onPointerUp={handleLoopHandlePointerUp}
                 title="Drag to adjust the loop end"
-                style={{ left: `${timelineMarkerPercent(loopRegion.end, timelineDuration)}%` }}
+                style={{ left: `${timelineMarkerPercent(loopRegion.end, timelineStart, timelineEnd)}%` }}
                 className="absolute -translate-x-1/2 -translate-y-1/2 top-1/2 w-1.5 h-4 bg-blue-400 hover:bg-blue-300 cursor-ew-resize rounded-full touch-none"
               />
             </>
@@ -942,7 +1105,7 @@ export function ReviewScreen({
                 key={b.id}
                 onClick={() => handleJumpToBookmark(b.timeSeconds)}
                 title={b.label}
-                style={{ left: `${timelineMarkerPercent(b.timeSeconds, timelineDuration)}%` }}
+                style={{ left: `${timelineMarkerPercent(b.timeSeconds, timelineStart, timelineEnd)}%` }}
                 className="absolute -translate-x-1/2 -translate-y-1/2 w-0.5 h-3 bg-amber-400 hover:bg-amber-300 hover:h-4 pointer-events-auto cursor-pointer rounded-full transition-[height]"
               />
             ))}
