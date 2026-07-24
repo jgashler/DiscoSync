@@ -91,7 +91,10 @@ export function VideoGrid({
               setDraggingId(null);
               setDragOverId(null);
             }}
-            magnifiable={!zoomed}
+            // With only 1-2 tiles, each one is already large enough that
+            // magnify-on-hover doesn't add anything — it only earns its
+            // keep once the grid is dense enough to make a tile small.
+            magnifiable={!zoomed && ordered.length >= 3}
             onToggleZoom={() => zoom.toggle(clip.id)}
             zoomActive={zoomed}
             zoomRegion={zoom.zoomRegionFor(clip.id, true)}

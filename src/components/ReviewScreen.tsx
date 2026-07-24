@@ -207,11 +207,17 @@ export function ReviewScreen({
     setAudioSyncError(null);
     try {
       const outcomes = await suggestAudioSyncOffsets(
-        { id: anchorClip.id, path: anchorClip.filePath, currentOffsetSeconds: effectiveOffsets[anchorClip.id] },
+        {
+          id: anchorClip.id,
+          path: anchorClip.filePath,
+          currentOffsetSeconds: effectiveOffsets[anchorClip.id],
+          durationSeconds: anchorClip.durationSeconds,
+        },
         candidateClips.map((c) => ({
           id: c.id,
           path: c.filePath,
           currentOffsetSeconds: effectiveOffsets[c.id],
+          durationSeconds: c.durationSeconds,
         })),
         AUDIO_SYNC_SEARCH_WINDOW_SECONDS,
       );
@@ -221,7 +227,11 @@ export function ReviewScreen({
       setClips((prev) =>
         prev.map((c) => {
           const outcome = outcomes[c.id];
-          if (!outcome || outcome.status !== "suggested") return c;
+          // The Rust side already rejects a non-finite result as a failure
+          // (see suggest_one_offset), but a bad offset silently corrupting
+          // a clip's sync is worse than just not applying it, so this stays
+          // defensive rather than trusting the backend unconditionally.
+          if (!outcome || outcome.status !== "suggested" || !Number.isFinite(outcome.offsetSeconds)) return c;
           // manualOffsetSeconds sits on top of rough sync — back it out of
           // the suggested absolute offset so the effective offset lands
           // exactly where the suggestion says.
@@ -291,7 +301,17 @@ export function ReviewScreen({
       if (!isSynced(clip)) continue;
       const el = videoRefs.current.get(clip.id);
       if (!el) continue;
-      el.currentTime = expectedLocalTime(clip, newGlobalTime);
+      const local = expectedLocalTime(clip, newGlobalTime);
+      // <video>.currentTime throws on anything but a finite number — a
+      // hard crash (blank screen) for what should just be "don't move this
+      // clip." Guards further upstream should prevent a non-finite time
+      // from ever reaching here, but this is the one place that would
+      // otherwise take the whole app down, so it gets the final say.
+      if (!Number.isFinite(local)) {
+        console.error(`skipped seeking clip ${clip.id} — computed a non-finite local time (${local})`);
+        continue;
+      }
+      el.currentTime = local;
     }
   }
 
@@ -701,7 +721,6 @@ export function ReviewScreen({
   const audioSyncOutcomes = audioSyncReview ? Object.values(audioSyncReview.outcomes) : [];
   const audioSyncSuggestedCount = audioSyncOutcomes.filter((o) => o.status === "suggested").length;
   const audioSyncFailedCount = audioSyncOutcomes.filter((o) => o.status === "failed").length;
-  const audioSyncHasLowConfidence = audioSyncOutcomes.some((o) => o.status === "suggested" && o.confidence < 0.3);
 
   return (
     <div className="h-screen bg-neutral-950 text-neutral-100 flex flex-col overflow-hidden">
@@ -738,7 +757,7 @@ export function ReviewScreen({
               <button
                 onClick={() => void handleSyncByAudio()}
                 disabled={isSyncingAudio}
-                title="Suggest sync offsets from each clip's audio."
+                title="Suggest sync offsets by matching audio just before and after where each clip is currently synced. Runs entirely offline, and only ever suggests — you keep or revert the result."
                 className="rounded-md bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-sm transition-colors flex items-center gap-1.5"
               >
                 {isSyncingAudio ? <Loader2 size={14} className="animate-spin" /> : <AudioWaveform size={14} />}
@@ -785,28 +804,53 @@ export function ReviewScreen({
         )}
 
         {audioSyncReview && (
-          <div className="mb-2 px-3 py-2 rounded-md bg-blue-950/40 border border-blue-900 text-sm text-blue-200 flex items-center justify-between gap-3">
-            <span>
-              Audio sync suggested new offsets for {audioSyncSuggestedCount}{" "}
-              {audioSyncSuggestedCount === 1 ? "clip" : "clips"}
-              {audioSyncFailedCount > 0
-                ? ` (${audioSyncFailedCount} couldn't be matched — their offsets weren't changed)`
-                : ""}
-              .{audioSyncHasLowConfidence ? " Some matches were weak — check playback carefully." : ""}
-            </span>
-            <div className="flex gap-2 shrink-0">
-              <button
-                onClick={handleKeepAudioSync}
-                className="rounded-md bg-blue-600 hover:bg-blue-500 px-3 py-1 text-sm transition-colors"
-              >
-                Keep
-              </button>
-              <button
-                onClick={handleRevertAudioSync}
-                className="rounded-md bg-neutral-800 hover:bg-neutral-700 px-3 py-1 text-sm transition-colors"
-              >
-                Revert
-              </button>
+          <div className="mb-2 rounded-md bg-blue-950/40 border border-blue-900 text-sm text-blue-200">
+            <div className="px-3 py-2 flex items-center justify-between gap-3">
+              <span>
+                Audio sync suggested new offsets for {audioSyncSuggestedCount}{" "}
+                {audioSyncSuggestedCount === 1 ? "clip" : "clips"}
+                {audioSyncFailedCount > 0
+                  ? ` (${audioSyncFailedCount} couldn't be matched — their offsets weren't changed)`
+                  : ""}
+                .
+              </span>
+              <div className="flex gap-2 shrink-0">
+                <button
+                  onClick={handleKeepAudioSync}
+                  className="rounded-md bg-blue-600 hover:bg-blue-500 px-3 py-1 text-sm transition-colors"
+                >
+                  Keep
+                </button>
+                <button
+                  onClick={handleRevertAudioSync}
+                  className="rounded-md bg-neutral-800 hover:bg-neutral-700 px-3 py-1 text-sm transition-colors"
+                >
+                  Revert
+                </button>
+              </div>
+            </div>
+            {/* Per-clip breakdown — the aggregate counts above don't say
+                which clip did what, and that matters here: a "match" this
+                tool can't explain isn't one you should just trust. */}
+            <div className="px-3 pb-2 space-y-0.5 text-xs text-blue-300/80">
+              {Object.entries(audioSyncReview.outcomes).map(([clipId, outcome]) => {
+                const clip = clips.find((c) => c.id === clipId);
+                const label = clip?.description.trim() || clip?.fileName || clipId;
+                if (outcome.status === "suggested") {
+                  const pct = Math.round(outcome.confidence * 100);
+                  return (
+                    <div key={clipId}>
+                      {label}: matched ({pct}% confidence)
+                      {outcome.confidence < 0.3 ? " — weak match, check playback carefully" : ""}
+                    </div>
+                  );
+                }
+                return (
+                  <div key={clipId}>
+                    {label}: not matched — {outcome.error}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

@@ -279,7 +279,10 @@ export function VideoTile({
           {clip.description || clip.fileName}
         </div>
         {!compact && (
-          <div className="absolute top-1 right-1 flex items-center gap-1.5 px-1.5 py-1 bg-black/60 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+          <div
+            data-no-tile-drag="true"
+            className="absolute top-1 right-1 flex items-center gap-1.5 px-1.5 py-1 bg-black/60 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+          >
             {onToggleZoom && (
               <button
                 onClick={(e) => {

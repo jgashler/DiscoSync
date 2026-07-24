@@ -141,6 +141,8 @@ export interface AudioSyncClipInput {
   id: string;
   path: string;
   currentOffsetSeconds: number;
+  /** Needed to find where this clip currently overlaps the anchor — see suggestAudioSyncOffsets. */
+  durationSeconds: number | null;
 }
 
 export type AudioSyncOutcome =
@@ -151,19 +153,38 @@ export type AudioSyncOutcome =
  * For each clip in `candidates`, suggests an offset (in the same coordinate
  * space as `currentOffsetSeconds`) that best aligns its audio with
  * `anchor`'s, decoded and correlated entirely locally — no network access.
- * Searches within `searchWindowSeconds` of each clip's current offset
- * relative to the anchor, since this refines an already-rough-synced
- * position rather than searching blind. Never modifies any clip's offset
- * itself — the caller applies (and can revert) the suggestion.
+ * Audio is sampled from the stretch where each clip currently overlaps the
+ * anchor (not from the start of the file), since clips are often synced far
+ * from their own local time 0 — sampling from file-start could compare two
+ * unrelated stretches of audio. The suggested offset is searched within
+ * `searchWindowSeconds` of the clip's current offset relative to the
+ * anchor, since this refines an already-rough-synced position rather than
+ * searching blind. Never modifies any clip's offset itself — the caller
+ * applies (and can revert) the suggestion.
  */
+// Safety net on top of the Rust side's own defenses (panic isolation, a
+// hard packet-count cap): if the backend genuinely never responds for any
+// reason, the UI must not wait forever — that reads to the user as a frozen
+// app, not a failed operation they can retry.
+const AUDIO_SYNC_TIMEOUT_MS = 45_000;
+
 export async function suggestAudioSyncOffsets(
   anchor: AudioSyncClipInput,
   candidates: AudioSyncClipInput[],
   searchWindowSeconds: number,
 ): Promise<Record<string, AudioSyncOutcome>> {
-  return invoke<Record<string, AudioSyncOutcome>>("suggest_audio_sync_offsets", {
-    anchor,
-    candidates,
-    searchWindowSeconds,
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(
+      () => reject(new Error("Audio sync timed out — this can happen with an unusually long or unusual file.")),
+      AUDIO_SYNC_TIMEOUT_MS,
+    );
   });
+  return Promise.race([
+    invoke<Record<string, AudioSyncOutcome>>("suggest_audio_sync_offsets", {
+      anchor,
+      candidates,
+      searchWindowSeconds,
+    }),
+    timeout,
+  ]);
 }

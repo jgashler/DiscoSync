@@ -1,4 +1,5 @@
 import {
+  AudioWaveform,
   Bookmark,
   Columns2,
   Keyboard,
@@ -113,6 +114,22 @@ export function HelpScreen() {
             nudge by a full hour, minute, or second, for quickly correcting a camera whose clock
             was set off by a round amount rather than clicking through frame by frame. You can
             also type an exact offset directly into the number box.
+          </p>
+        </Section>
+
+        <Section icon={<AudioWaveform size={17} />} title="Syncing by audio">
+          <p>
+            If two or more videos have audio, the <strong>Sync by audio</strong> button (top
+            right, once your videos are roughly synced) compares each video's sound to find a
+            tighter alignment automatically. It listens just before and after wherever the videos
+            are currently synced, so it works even when that moment is deep into a long
+            recording. Everything happens on your computer — nothing is uploaded anywhere.
+          </p>
+          <p>
+            It only ever suggests an offset. The new alignment is applied right away so you can
+            watch and listen to it, but a banner appears letting you <strong>Keep</strong> it or{" "}
+            <strong>Revert</strong> back to what you had before. If a video's audio couldn't be
+            matched, it's left untouched and called out in the banner.
           </p>
         </Section>
 
