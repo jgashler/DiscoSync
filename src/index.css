@@ -1,1 +1,17 @@
 @import "tailwindcss";
+
+/* Disable the elastic/rubber-band overscroll bounce everywhere in the app —
+   scrolling past the edge of any scrollable area (the page itself, or an
+   inner panel/dropdown list) should just stop, not reveal empty space
+   beyond the content. The background color is a defensive fallback in case
+   anything still peeks through mid-scroll before settling. */
+html,
+body,
+* {
+  overscroll-behavior: none;
+}
+
+html,
+body {
+  background-color: #0a0a0a;
+}
