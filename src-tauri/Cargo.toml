@@ -2,7 +2,8 @@
 name = "discosync"
 version = "0.1.0"
 description = "Multi-angle video sync review tool for legal discovery footage"
-authors = ["you"]
+authors = ["Jack Gashler"]
+license = "MIT"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

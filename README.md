@@ -44,4 +44,12 @@ src-tauri/            # Rust backend (Tauri)
 ```sh
 npm run tauri build
 ```
-# DiscoSync
+
+## Contributing
+
+Issues and pull requests are welcome. Free to fork and adapt for your own
+use — see [LICENSE](LICENSE).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
