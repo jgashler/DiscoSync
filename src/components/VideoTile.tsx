@@ -287,7 +287,7 @@ export function VideoTile({
                 : `Video out of current range ${
                     rangeStatus.status === "before"
                       ? `until ${formatSecondsShort(rangeStatus.secondsUntilStart)}`
-                      : `for ${formatSecondsShort(rangeStatus.secondsSinceEnd)}`
+                      : `since ${formatSecondsShort(rangeStatus.secondsSinceEnd)}`
                   }`}
             </span>
           </div>

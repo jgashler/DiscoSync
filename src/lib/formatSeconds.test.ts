@@ -24,4 +24,14 @@ describe("formatSecondsShort", () => {
   it("formats zero", () => {
     expect(formatSecondsShort(0)).toBe("0:00");
   });
+
+  it("adds hours once the total reaches an hour", () => {
+    expect(formatSecondsShort(3600)).toBe("1:00:00");
+    expect(formatSecondsShort(3661)).toBe("1:01:01");
+    expect(formatSecondsShort(18000)).toBe("5:00:00");
+  });
+
+  it("pads minutes and seconds when hours are shown", () => {
+    expect(formatSecondsShort(3605)).toBe("1:00:05");
+  });
 });
