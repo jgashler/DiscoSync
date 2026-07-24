@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DragEvent, ReactNode, SyntheticEvent } from "react";
-import { ChevronLeft, ChevronRight, Volume2, VolumeX, ZoomIn, ZoomOut } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Volume2, VolumeX, ZoomIn, ZoomOut } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { frameStepSeconds, NUDGE_STEPS } from "../lib/fineTune";
 import { computeClipRangeStatus } from "../lib/clipRange";
@@ -59,6 +59,9 @@ interface VideoTileProps {
   /** When provided, shows a per-tile zoom toggle button alongside mute/volume. */
   onToggleZoom?: () => void;
   zoomActive?: boolean;
+  /** True while picking clips for audio sync and this one is eligible (synced) — shows a checkable highlight. */
+  audioSyncSelectable?: boolean;
+  audioSyncSelected?: boolean;
 }
 
 export function VideoTile({
@@ -86,6 +89,8 @@ export function VideoTile({
   overlayFadesOnLeave = false,
   onToggleZoom,
   zoomActive = false,
+  audioSyncSelectable = false,
+  audioSyncSelected = false,
 }: VideoTileProps) {
   const step = frameStepSeconds(clip.frameRate);
   const rangeStatus = computeClipRangeStatus(effectiveOffsetSeconds, clip.durationSeconds, globalTime);
@@ -242,9 +247,24 @@ export function VideoTile({
         className={`relative bg-black rounded-md overflow-hidden flex-1 min-h-0 group cursor-grab active:cursor-grabbing transition-[opacity,transform] duration-300 ${
           isDragging ? "opacity-40" : ""
         } ${isDragOver && !isDragging ? "ring-2 ring-blue-500" : ""} ${onClick ? "cursor-pointer" : ""} ${
-          magnified ? "z-20 shadow-2xl shadow-black/80" : ""
-        }`}
+          audioSyncSelected ? "ring-2 ring-blue-500" : ""
+        } ${magnified ? "z-20 shadow-2xl shadow-black/80" : ""}`}
       >
+        {audioSyncSelectable && (
+          <div
+            className={`absolute inset-0 z-10 flex items-start justify-end p-2 pointer-events-none transition-colors ${
+              audioSyncSelected ? "bg-blue-500/10" : ""
+            }`}
+          >
+            <div
+              className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                audioSyncSelected ? "bg-blue-500 border-blue-500" : "border-white/70 bg-black/40"
+              }`}
+            >
+              {audioSyncSelected && <Check size={13} className="text-white" />}
+            </div>
+          </div>
+        )}
         <video
           ref={videoRefCallback}
           src={convertFileSrc(clip.filePath)}

@@ -165,6 +165,41 @@ export function ReviewScreen({
     previousOffsets: Record<string, number>;
     outcomes: Record<string, AudioSyncOutcome>;
   } | null>(null);
+  // Which clips to run audio sync on has to be an explicit choice — with
+  // 3+ clips loaded, "sync everything against the earliest one" can pull in
+  // a pair that was never meant to be compared. Selecting is done by
+  // clicking the panes directly, in whatever view is currently active —
+  // Focus/Dynamic's thumbnail rail tiles are clickable too, so nothing
+  // needs to force a view switch.
+  const [audioSyncSelecting, setAudioSyncSelecting] = useState(false);
+  const [audioSyncSelectedIds, setAudioSyncSelectedIds] = useState<string[]>([]);
+  // Clips that have anchored a prior audio sync this session — preferred as
+  // the anchor again on a later run (see handleSyncByAudio) so the
+  // "reference" clip stays consistent across successive syncs instead of
+  // flipping based on offset values that can shift slightly between runs.
+  // Session-local only, not saved with the project — it's a convenience,
+  // not meaningful project state.
+  const [previousAudioSyncAnchorIds, setPreviousAudioSyncAnchorIds] = useState<Set<string>>(new Set());
+
+  function toggleAudioSyncSelected(clipId: string) {
+    setAudioSyncSelectedIds((prev) => (prev.includes(clipId) ? prev.filter((id) => id !== clipId) : [...prev, clipId]));
+  }
+
+  function handleStartAudioSyncSelection() {
+    setAudioSyncSelectedIds([]);
+    setAudioSyncSelecting(true);
+  }
+
+  function exitAudioSyncSelection() {
+    setAudioSyncSelecting(false);
+    setAudioSyncSelectedIds([]);
+  }
+
+  function handleConfirmAudioSyncSelection() {
+    const idsToSync = audioSyncSelectedIds;
+    exitAudioSyncSelection();
+    void handleSyncByAudio(idsToSync);
+  }
 
   // Total effective offset per clip: rough sync + manual fine-tune. Clips
   // without a valid rough-sync offset (no/invalid timestamp) are left out
@@ -191,17 +226,30 @@ export function ReviewScreen({
     return effectiveOffsets[clip.id] !== undefined;
   }
 
-  async function handleSyncByAudio() {
-    const syncedClips = clips.filter(isSynced);
-    if (syncedClips.length < 2) return;
+  async function handleSyncByAudio(selectedIds: string[]) {
+    const selectedClips = clips.filter((c) => selectedIds.includes(c.id) && isSynced(c));
+    if (selectedClips.length < 2) return;
 
-    // The earliest-starting clip anchors the correlation — every other
-    // clip's offset is suggested relative to it. Its own offset is never
-    // changed; there's nothing to compare it against.
-    const anchorClip = syncedClips.reduce((earliest, c) =>
-      effectiveOffsets[c.id] < effectiveOffsets[earliest.id] ? c : earliest,
-    );
-    const candidateClips = syncedClips.filter((c) => c.id !== anchorClip.id);
+    // One of the *selected* clips anchors the correlation — every other
+    // selected clip's offset is suggested relative to it. Its own offset is
+    // never changed; there's nothing to compare it against. Clips not
+    // selected are left alone entirely.
+    //
+    // Prefer whichever selected clip already anchored a previous sync this
+    // session, so the "reference" clip stays consistent across successive
+    // runs rather than flipping based on offset values. Only when that's
+    // ambiguous — none of the selected clips have anchored before, or more
+    // than one has — fall back to the earliest-starting one, same as before.
+    const previouslyAnchored = selectedClips.filter((c) => previousAudioSyncAnchorIds.has(c.id));
+    const anchorClip =
+      previouslyAnchored.length === 1
+        ? previouslyAnchored[0]
+        : selectedClips.reduce((earliest, c) =>
+            effectiveOffsets[c.id] < effectiveOffsets[earliest.id] ? c : earliest,
+          );
+    setPreviousAudioSyncAnchorIds((prev) => new Set(prev).add(anchorClip.id));
+
+    const candidateClips = selectedClips.filter((c) => c.id !== anchorClip.id);
 
     setIsSyncingAudio(true);
     setAudioSyncError(null);
@@ -753,16 +801,36 @@ export function ReviewScreen({
           )}
 
           <div className="flex gap-2">
-            {syncableClipCount > 1 && (
+            {syncableClipCount > 1 && !audioSyncSelecting && (
               <button
-                onClick={() => void handleSyncByAudio()}
+                onClick={handleStartAudioSyncSelection}
                 disabled={isSyncingAudio}
-                title="Suggest sync offsets by matching audio just before and after where each clip is currently synced. Runs entirely offline, and only ever suggests — you keep or revert the result."
+                title="Suggest a sync offset by matching audio between clips you pick. Runs entirely offline, and only ever suggests — you keep or revert the result."
                 className="rounded-md bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-sm transition-colors flex items-center gap-1.5"
               >
                 {isSyncingAudio ? <Loader2 size={14} className="animate-spin" /> : <AudioWaveform size={14} />}
                 Sync by audio
               </button>
+            )}
+            {audioSyncSelecting && (
+              <div className="flex items-center gap-2 bg-neutral-800 rounded-md pl-3 pr-1.5 py-1">
+                <span className="text-sm text-neutral-300 whitespace-nowrap">
+                  Click videos to sync — {audioSyncSelectedIds.length} selected
+                </span>
+                <button
+                  onClick={exitAudioSyncSelection}
+                  className="rounded-md px-2.5 py-1 text-sm hover:bg-neutral-700 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmAudioSyncSelection}
+                  disabled={audioSyncSelectedIds.length < 2}
+                  className="rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1 text-sm transition-colors"
+                >
+                  Sync
+                </button>
+              </div>
             )}
             <button
               onClick={() => void openHelpWindow()}
@@ -884,6 +952,9 @@ export function ReviewScreen({
             globalTime={globalTime}
             zoomByClip={zoomByClip}
             onZoomChange={handleZoomChange}
+            audioSyncSelecting={audioSyncSelecting}
+            audioSyncSelectedIds={audioSyncSelectedIds}
+            onToggleAudioSyncSelected={toggleAudioSyncSelected}
           />
         )}
         {!isSingleClip && (viewMode === "focus1" || viewMode === "focus2") && (
@@ -900,6 +971,9 @@ export function ReviewScreen({
             onDropClip={handleFocusDrop}
             zoomByClip={zoomByClip}
             onZoomChange={handleZoomChange}
+            audioSyncSelecting={audioSyncSelecting}
+            audioSyncSelectedIds={audioSyncSelectedIds}
+            onToggleAudioSyncSelected={toggleAudioSyncSelected}
           />
         )}
         {!isSingleClip && viewMode === "dynamic" && (
@@ -917,6 +991,9 @@ export function ReviewScreen({
             globalTime={globalTime}
             zoomByClip={zoomByClip}
             onZoomChange={handleZoomChange}
+            audioSyncSelecting={audioSyncSelecting}
+            audioSyncSelectedIds={audioSyncSelectedIds}
+            onToggleAudioSyncSelected={toggleAudioSyncSelected}
           />
         )}
       </div>

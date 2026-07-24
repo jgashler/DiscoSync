@@ -23,6 +23,10 @@ interface DynamicGridLayoutProps {
   /** Per-clip digital zoom, shared with the other view components and lifted to ReviewScreen for saving. */
   zoomByClip: Record<string, ClipZoomState>;
   onZoomChange: (clipId: string, next: ClipZoomState) => void;
+  /** True while the user is clicking tiles to pick clips for audio sync (see ReviewScreen). */
+  audioSyncSelecting?: boolean;
+  audioSyncSelectedIds?: string[];
+  onToggleAudioSyncSelected?: (clipId: string) => void;
 }
 
 const DRAG_MIME_TYPE = "application/x-discosync-clip-id";
@@ -43,6 +47,9 @@ export function DynamicGridLayout({
   globalTime,
   zoomByClip,
   onZoomChange,
+  audioSyncSelecting = false,
+  audioSyncSelectedIds = [],
+  onToggleAudioSyncSelected,
 }: DynamicGridLayoutProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -143,6 +150,12 @@ export function DynamicGridLayout({
     const isTileZoomable = isMain && !isSinglePanel;
     const tileZoomed = isTileZoomable && zoom.isEnabled(clip.id);
     const isZoomable = isSingleZoomTarget || isTileZoomable;
+    // While picking clips for audio sync, every tile's click is repurposed
+    // to toggle selection instead of its normal behavior (add to main
+    // grid, etc.) — restored automatically once selection mode ends, since
+    // this is computed fresh each render rather than being separate state.
+    const clipSynced = effectiveOffsets[clip.id] !== undefined;
+    const selectableNow = audioSyncSelecting && clipSynced;
 
     return (
       <VideoTile
@@ -167,8 +180,18 @@ export function DynamicGridLayout({
         // only for the main area — sidebar thumbnails already stay small
         // regardless of how many main tiles there are, so their magnify
         // isn't gated by this count.
-        magnifiable={!isSingleZoomTarget && !tileZoomed && (!isMain || mainClips.length >= 3)}
-        onClick={zone === "thumbnail" ? () => onFocusedClipIdsChange([...focusedClipIds, clip.id]) : undefined}
+        magnifiable={audioSyncSelecting ? false : !isSingleZoomTarget && !tileZoomed && (!isMain || mainClips.length >= 3)}
+        onClick={
+          audioSyncSelecting
+            ? selectableNow
+              ? () => onToggleAudioSyncSelected?.(clip.id)
+              : undefined
+            : zone === "thumbnail"
+              ? () => onFocusedClipIdsChange([...focusedClipIds, clip.id])
+              : undefined
+        }
+        audioSyncSelectable={selectableNow}
+        audioSyncSelected={audioSyncSelectedIds.includes(clip.id)}
         onToggleZoom={isTileZoomable ? () => zoom.toggle(clip.id) : undefined}
         zoomActive={tileZoomed}
         overlayFadesOnLeave={tileZoomed}

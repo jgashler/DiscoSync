@@ -19,6 +19,10 @@ interface VideoGridProps {
   /** Per-clip digital zoom, shared with the other view components and lifted to ReviewScreen for saving. */
   zoomByClip: Record<string, ClipZoomState>;
   onZoomChange: (clipId: string, next: ClipZoomState) => void;
+  /** True while the user is clicking tiles to pick clips for audio sync (see ReviewScreen). */
+  audioSyncSelecting?: boolean;
+  audioSyncSelectedIds?: string[];
+  onToggleAudioSyncSelected?: (clipId: string) => void;
 }
 
 const DRAG_MIME_TYPE = "application/x-discosync-clip-id";
@@ -35,6 +39,9 @@ export function VideoGrid({
   globalTime,
   zoomByClip,
   onZoomChange,
+  audioSyncSelecting = false,
+  audioSyncSelectedIds = [],
+  onToggleAudioSyncSelected,
 }: VideoGridProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -70,6 +77,7 @@ export function VideoGrid({
     >
       {ordered.map((clip) => {
         const zoomed = zoom.isEnabled(clip.id);
+        const clipSynced = effectiveOffsets[clip.id] !== undefined;
         return (
           <VideoTile
             key={clip.id}
@@ -91,10 +99,15 @@ export function VideoGrid({
               setDraggingId(null);
               setDragOverId(null);
             }}
+            onClick={
+              audioSyncSelecting && clipSynced ? () => onToggleAudioSyncSelected?.(clip.id) : undefined
+            }
+            audioSyncSelectable={audioSyncSelecting && clipSynced}
+            audioSyncSelected={audioSyncSelectedIds.includes(clip.id)}
             // With only 1-2 tiles, each one is already large enough that
             // magnify-on-hover doesn't add anything — it only earns its
             // keep once the grid is dense enough to make a tile small.
-            magnifiable={!zoomed && ordered.length >= 3}
+            magnifiable={!zoomed && !audioSyncSelecting && ordered.length >= 3}
             onToggleZoom={() => zoom.toggle(clip.id)}
             zoomActive={zoomed}
             zoomRegion={zoom.zoomRegionFor(clip.id, true)}

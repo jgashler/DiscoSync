@@ -120,10 +120,11 @@ export function HelpScreen() {
         <Section icon={<AudioWaveform size={17} />} title="Syncing by audio">
           <p>
             If two or more videos have audio, the <strong>Sync by audio</strong> button (top
-            right, once your videos are roughly synced) compares each video's sound to find a
-            tighter alignment automatically. It listens just before and after wherever the videos
-            are currently synced, so it works even when that moment is deep into a long
-            recording. Everything happens on your computer — nothing is uploaded anywhere.
+            right, once your videos are roughly synced) asks you to click the videos you want
+            compared against each other — click each one (a checkmark appears), then{" "}
+            <strong>Sync</strong>. It listens just before and after wherever those clips are
+            currently synced, so it works even when the moment is deep into a long recording.
+            Everything happens on your computer — nothing is uploaded anywhere.
           </p>
           <p>
             It only ever suggests an offset. The new alignment is applied right away so you can
