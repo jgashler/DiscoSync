@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DragEvent, ReactNode, SyntheticEvent } from "react";
 import { ChevronLeft, ChevronRight, Volume2, VolumeX, ZoomIn, ZoomOut } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { frameStepSeconds } from "../lib/fineTune";
+import { frameStepSeconds, NUDGE_STEPS } from "../lib/fineTune";
 import { computeClipRangeStatus } from "../lib/clipRange";
 import { formatSecondsShort } from "../lib/formatSeconds";
 import { clampAxisOffset, getClipBounds } from "../lib/magnifyOffset";
@@ -334,7 +334,17 @@ export function VideoTile({
           shows an *earlier* frame. "Forward" (show later footage) must
           therefore subtract from manualOffsetSeconds, and "back" adds. */}
       {!compact && (
-        <div className="flex items-center justify-center gap-1 shrink-0 text-[10px] text-neutral-500">
+        <div className="flex items-center justify-center flex-wrap gap-x-1 gap-y-0.5 shrink-0 text-[10px] text-neutral-500">
+          {NUDGE_STEPS.map(({ label, seconds }) => (
+            <button
+              key={`back-${label}`}
+              onClick={() => onNudge(clip.id, seconds)}
+              title={`Nudge back ${label}`}
+              className="px-1 h-4 flex items-center justify-center rounded hover:bg-neutral-800 hover:text-neutral-200 text-[9px] font-mono"
+            >
+              {label}
+            </button>
+          ))}
           <button
             onClick={() => onNudge(clip.id, step)}
             title="Nudge back one frame"
@@ -360,6 +370,16 @@ export function VideoTile({
           >
             <ChevronRight size={12} />
           </button>
+          {[...NUDGE_STEPS].reverse().map(({ label, seconds }) => (
+            <button
+              key={`forward-${label}`}
+              onClick={() => onNudge(clip.id, -seconds)}
+              title={`Nudge forward ${label}`}
+              className="px-1 h-4 flex items-center justify-center rounded hover:bg-neutral-800 hover:text-neutral-200 text-[9px] font-mono"
+            >
+              {label}
+            </button>
+          ))}
         </div>
       )}
     </div>

@@ -16,9 +16,11 @@ export function normalizeLoopRegion(pointA: number, pointB: number): LoopRegion 
   return pointA <= pointB ? { start: pointA, end: pointB } : { start: pointB, end: pointA };
 }
 
-export function clampLoopRegion(region: LoopRegion, duration: number): LoopRegion {
-  const start = Math.min(Math.max(region.start, 0), duration);
-  const end = Math.min(Math.max(region.end, 0), duration);
+// `min`/`max` are the timeline's own bounds — not always [0, duration], since
+// a trimmed timeline (see ReviewScreen's timelineStart) can start above 0.
+export function clampLoopRegion(region: LoopRegion, min: number, max: number): LoopRegion {
+  const start = Math.min(Math.max(region.start, min), max);
+  const end = Math.min(Math.max(region.end, min), max);
   return normalizeLoopRegion(start, end);
 }
 
@@ -29,13 +31,14 @@ export function resizeLoopRegion(
   region: LoopRegion,
   edge: "start" | "end",
   newTime: number,
-  duration: number,
+  min: number,
+  max: number,
 ): LoopRegion {
-  const clampedTime = Math.min(Math.max(newTime, 0), duration);
+  const clampedTime = Math.min(Math.max(newTime, min), max);
   if (edge === "start") {
-    return { start: Math.max(0, Math.min(clampedTime, region.end - MIN_LOOP_SECONDS)), end: region.end };
+    return { start: Math.max(min, Math.min(clampedTime, region.end - MIN_LOOP_SECONDS)), end: region.end };
   }
-  return { start: region.start, end: Math.min(duration, Math.max(clampedTime, region.start + MIN_LOOP_SECONDS)) };
+  return { start: region.start, end: Math.min(max, Math.max(clampedTime, region.start + MIN_LOOP_SECONDS)) };
 }
 
 // Whether playback at `currentTime` has reached (or passed) the loop end

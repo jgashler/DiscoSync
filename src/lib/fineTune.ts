@@ -11,6 +11,16 @@ export function frameStepSeconds(frameRate: number | null): number {
   return 1 / FALLBACK_FRAME_RATE;
 }
 
+// Coarser nudge steps alongside the frame step, for correcting a camera
+// clock that's off by a round amount (common when a camera's time wasn't
+// set carefully) without having to hand-calculate seconds and click the
+// frame nudge hundreds of times.
+export const NUDGE_STEPS: { label: string; seconds: number }[] = [
+  { label: "1h", seconds: 3600 },
+  { label: "1m", seconds: 60 },
+  { label: "1s", seconds: 1 },
+];
+
 /**
  * Step size for advancing every loaded clip by "one frame" together. Uses
  * the finest (highest frame rate) step among them so stepping never

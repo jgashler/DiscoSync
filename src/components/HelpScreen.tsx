@@ -108,8 +108,11 @@ export function HelpScreen() {
         <Section icon={<SlidersHorizontal size={17} />} title="Fine-tuning sync by hand">
           <p>
             If a video looks slightly out of step with the others, pause playback first. Under
-            each video are two small arrow buttons and a number box. Use them to nudge that video
-            forward or backward one frame at a time until it lines up exactly.
+            each video are nudge buttons and a number box showing its offset in seconds. The
+            arrow buttons nudge one frame at a time for exact alignment. The 1h / 1m / 1s buttons
+            nudge by a full hour, minute, or second, for quickly correcting a camera whose clock
+            was set off by a round amount rather than clicking through frame by frame. You can
+            also type an exact offset directly into the number box.
           </p>
         </Section>
 
