@@ -163,7 +163,11 @@ export function DynamicGridLayout({
         onDrop={(e) => handleTileDrop(e, clip.id, zone)}
         onDragEnd={clearDragState}
         compact={compact}
-        magnifiable={!isSingleZoomTarget && !tileZoomed}
+        // Same "not worth it below 3 tiles" rule as the plain grid, but
+        // only for the main area — sidebar thumbnails already stay small
+        // regardless of how many main tiles there are, so their magnify
+        // isn't gated by this count.
+        magnifiable={!isSingleZoomTarget && !tileZoomed && (!isMain || mainClips.length >= 3)}
         onClick={zone === "thumbnail" ? () => onFocusedClipIdsChange([...focusedClipIds, clip.id]) : undefined}
         onToggleZoom={isTileZoomable ? () => zoom.toggle(clip.id) : undefined}
         zoomActive={tileZoomed}
