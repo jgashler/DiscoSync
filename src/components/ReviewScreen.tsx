@@ -41,6 +41,15 @@ import type { Bookmark, ClipZoomState, PlaybackSnapshot, ViewMode, VideoClip } f
 
 const SKIP_SECONDS = 10;
 
+// Where a clip should be sitting, in its own local time, given its offset
+// on the shared timeline and the current shared clock — shared by the
+// render-time seek helpers below and the ref-callback seek that fires when
+// a clip's <video> element (re)mounts, e.g. on a view-mode switch.
+function clampedLocalTime(offsetSeconds: number, durationSeconds: number | null, atGlobalTime: number): number {
+  const duration = durationSeconds ?? Infinity;
+  return Math.min(Math.max(atGlobalTime - offsetSeconds, 0), duration);
+}
+
 // How far from each clip's *current* effective offset the audio-sync
 // search is allowed to move it. This is a refinement of an already
 // roughly-synced position (from entered timestamps, possibly hand-nudged),
@@ -118,9 +127,37 @@ export function ReviewScreen({
   initialPlaybackState,
 }: ReviewScreenProps) {
   const videoRefs = useRef(new Map<string, HTMLVideoElement>());
+  // Snapshot of whatever registerVideoRef needs to seek a freshly-mounted
+  // element, kept fresh every render (see the assignment below) so the
+  // callback itself can stay referentially stable — VideoTile depends on
+  // that stability to avoid detaching/reattaching its ref on every render
+  // (see the comment on videoRefCallback there).
+  const latestSeekInputsRef = useRef<{
+    clips: VideoClip[];
+    effectiveOffsets: Record<string, number>;
+    globalTime: number;
+  }>({ clips, effectiveOffsets: {}, globalTime: initialPlaybackState.lastPositionSeconds });
   const registerVideoRef = useCallback((id: string, el: HTMLVideoElement | null) => {
-    if (el) videoRefs.current.set(id, el);
-    else videoRefs.current.delete(id);
+    if (!el) {
+      videoRefs.current.delete(id);
+      return;
+    }
+    videoRefs.current.set(id, el);
+    // Switching view mode (Grid/Focus/Dynamic are separate component
+    // trees) unmounts and remounts every clip's <video> element, which
+    // otherwise resets it to its first frame until the next play/scrub.
+    // Seek the newly-mounted element to wherever the shared clock
+    // currently sits right away — setting currentTime before metadata has
+    // loaded is honored by the browser as its "default start position" as
+    // soon as it does, so this doesn't need to wait for onLoadedMetadata.
+    const { clips: latestClips, effectiveOffsets: latestOffsets, globalTime: latestGlobalTime } =
+      latestSeekInputsRef.current;
+    const clip = latestClips.find((c) => c.id === id);
+    const offset = clip ? latestOffsets[clip.id] : undefined;
+    if (clip && offset !== undefined) {
+      const local = clampedLocalTime(offset, clip.durationSeconds, latestGlobalTime);
+      if (Number.isFinite(local)) el.currentTime = local;
+    }
   }, []);
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -222,6 +259,7 @@ export function ReviewScreen({
     }
     return offsets;
   }, [clips, syncOffsets]);
+  latestSeekInputsRef.current = { clips, effectiveOffsets, globalTime };
 
   function isSynced(clip: VideoClip): boolean {
     return effectiveOffsets[clip.id] !== undefined;
@@ -340,9 +378,7 @@ export function ReviewScreen({
   const timelineEnd = timelineStart + timelineDuration;
 
   function expectedLocalTime(clip: VideoClip, atGlobalTime: number): number {
-    const local = atGlobalTime - effectiveOffsets[clip.id];
-    const duration = clip.durationSeconds ?? Infinity;
-    return Math.min(Math.max(local, 0), duration);
+    return clampedLocalTime(effectiveOffsets[clip.id], clip.durationSeconds, atGlobalTime);
   }
 
   function seekAllTo(newGlobalTime: number) {
