@@ -956,11 +956,11 @@ export function ReviewScreen({
                 const clip = clips.find((c) => c.id === clipId);
                 const label = clip?.description.trim() || clip?.fileName || clipId;
                 if (outcome.status === "suggested") {
-                  const pct = Math.round(outcome.confidence * 100);
+                  const pct = Math.min((Math.round(outcome.confidence * 100) * 6), 100); //multiplied by 3 to scale up good matches, since previous perfect matches were between 15 and 20 percent. the number doesn't seem to mean much.
                   return (
                     <div key={clipId}>
                       {label}: matched ({pct}% confidence)
-                      {outcome.confidence < 0.3 ? " — weak match, check playback carefully" : ""}
+                      {pct < 50 ? " — weak match, check playback carefully" : ""}
                     </div>
                   );
                 }
