@@ -538,6 +538,39 @@ mod tests {
         assert!((-300..=300).contains(&lag));
     }
 
+    // Not a correctness test — times the correlation math in isolation, at
+    // the sizes real usage actually produces, with zero real audio/video
+    // involved (pseudo_noise is synthetic). Useful for checking whether the
+    // FFT/correlation step itself is a meaningful part of "audio sync feels
+    // slow," separate from file decoding or anything UI-side. Ignored by
+    // default so it doesn't affect normal `cargo test` runs or CI timing;
+    // run explicitly with:
+    //   cargo test --release --lib audio_sync::tests::bench_ -- --ignored --nocapture
+    // (--release matters a lot here — FFT performance in an unoptimized
+    // debug build isn't representative of the actual bundled app).
+    #[test]
+    #[ignore]
+    fn bench_best_lag_samples_at_realistic_sizes() {
+        // Matches suggest_one_offset: AUDIO_SAMPLE_HALF_WINDOW_SECONDS * 2
+        // seconds of audio per clip, downsampled to WORKING_SAMPLE_RATE.
+        let samples_per_clip = (AUDIO_SAMPLE_HALF_WINDOW_SECONDS * 2.0 * WORKING_SAMPLE_RATE as f64) as usize;
+        let anchor = pseudo_noise(samples_per_clip, 1);
+        let candidate = pseudo_noise(samples_per_clip, 2);
+
+        for (label, search_window_seconds) in [("5s", 5.0), ("30s", 30.0), ("5m", 300.0)] {
+            let window_samples = (search_window_seconds * WORKING_SAMPLE_RATE as f64).round() as i64;
+
+            let start = std::time::Instant::now();
+            let (_lag, _confidence) = best_lag_samples(&anchor, &candidate, 0, window_samples);
+            let elapsed = start.elapsed();
+
+            println!(
+                "search window {label:>3}: {:>6.1}ms  ({samples_per_clip} samples/clip, window_samples={window_samples})",
+                elapsed.as_secs_f64() * 1000.0
+            );
+        }
+    }
+
     #[test]
     fn downsample_mono_reduces_length_by_the_expected_factor() {
         let samples: Vec<f32> = (0..1000).map(|i| i as f32).collect();

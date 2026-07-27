@@ -55,7 +55,22 @@ function clampedLocalTime(offsetSeconds: number, durationSeconds: number | null,
 // roughly-synced position (from entered timestamps, possibly hand-nudged),
 // not a blind search across the whole file — a wide window would risk
 // locking onto a spurious match far from where the user placed it.
-const AUDIO_SYNC_SEARCH_WINDOW_SECONDS = 30;
+// User-selectable (see audioSyncSearchWindowSeconds below) since how far
+// off the rough sync might be is a judgment call only the user can make;
+// 5s is the default since most clips only need a small correction.
+//
+// NOT a meaningful speed knob, despite how that might look — measured via
+// audio_sync.rs's bench_best_lag_samples_at_realistic_sizes: the
+// FFT/correlation cost is dominated by how much audio gets decoded
+// (a fixed window, unrelated to this setting), not by how far the final
+// lag search scans within the already-computed result. 5s vs 5m search
+// windows cost about the same in practice.
+const AUDIO_SYNC_SEARCH_WINDOW_OPTIONS = [
+  { label: "5s", value: 5 },
+  { label: "30s", value: 30 },
+  { label: "5m", value: 300 },
+] as const;
+const DEFAULT_AUDIO_SYNC_SEARCH_WINDOW_SECONDS = 5;
 
 // "crawl" isn't a native HTML5 playbackRate — for a typical 30fps clip that
 // would be ~0.033x, below what browsers can decode/play smoothly (audio
@@ -218,6 +233,12 @@ export function ReviewScreen({
   // Session-local only, not saved with the project — it's a convenience,
   // not meaningful project state.
   const [previousAudioSyncAnchorIds, setPreviousAudioSyncAnchorIds] = useState<Set<string>>(new Set());
+  // How far either side of each clip's current position to search — see
+  // AUDIO_SYNC_SEARCH_WINDOW_OPTIONS above. Picked per-run right before
+  // confirming the selected clips, not saved with the project.
+  const [audioSyncSearchWindowSeconds, setAudioSyncSearchWindowSeconds] = useState<number>(
+    DEFAULT_AUDIO_SYNC_SEARCH_WINDOW_SECONDS,
+  );
 
   function toggleAudioSyncSelected(clipId: string) {
     setAudioSyncSelectedIds((prev) => (prev.includes(clipId) ? prev.filter((id) => id !== clipId) : [...prev, clipId]));
@@ -306,7 +327,7 @@ export function ReviewScreen({
           currentOffsetSeconds: effectiveOffsets[c.id],
           durationSeconds: c.durationSeconds,
         })),
-        AUDIO_SYNC_SEARCH_WINDOW_SECONDS,
+        audioSyncSearchWindowSeconds,
       );
 
       const previousOffsets = Object.fromEntries(clips.map((c) => [c.id, c.manualOffsetSeconds]));
@@ -572,15 +593,71 @@ export function ReviewScreen({
     setIsPlaying(true);
   }
 
-  function handleScrub(value: number) {
-    const clamped = Math.min(Math.max(value, timelineStart), timelineEnd);
+  function updateGlobalTimeNow(clamped: number) {
     setGlobalTime(clamped);
-    seekAllTo(clamped);
     // Keep the playback clock in sync with the scrub position. Without
     // this, the rAF loop (still computing from the old startGlobalTime)
     // overwrites the scrub on its very next tick if playing — the
     // "flashes forward then snaps back" bug.
     clockRef.current = { startPerfMs: performance.now(), startGlobalTime: clamped };
+  }
+
+  function handleScrub(value: number) {
+    const clamped = Math.min(Math.max(value, timelineStart), timelineEnd);
+    updateGlobalTimeNow(clamped);
+    seekAllTo(clamped);
+  }
+
+  // How often dragging the scrub bar is allowed to actually re-seek every
+  // clip's <video> element. Seeking is a real decode operation, not a
+  // cheap state update, and the range input's `input` event fires far
+  // faster (every pixel of drag) than the browser's media pipeline can
+  // keep multiple clips' seeks up with — that mismatch is what makes
+  // dragging feel laggy once more than a couple of clips are loaded. The
+  // scrub thumb, clock, and timeline markers stay perfectly responsive
+  // either way, since those only need globalTime, not an actual seek — so
+  // only the seek itself is throttled here, via a trailing-edge throttle
+  // that guarantees the very last position you drag to is always the one
+  // that ends up applied, not whichever value happened to land on a tick.
+  const SCRUB_DRAG_SEEK_THROTTLE_MS = 80;
+  const lastDragSeekAtRef = useRef(0);
+  const pendingDragSeekRef = useRef<number | null>(null);
+  const dragSeekTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (dragSeekTimeoutRef.current !== null) clearTimeout(dragSeekTimeoutRef.current);
+    };
+  }, []);
+
+  function handleScrubDrag(value: number) {
+    const clamped = Math.min(Math.max(value, timelineStart), timelineEnd);
+    updateGlobalTimeNow(clamped);
+
+    const now = performance.now();
+    const sinceLastSeek = now - lastDragSeekAtRef.current;
+    if (sinceLastSeek >= SCRUB_DRAG_SEEK_THROTTLE_MS) {
+      lastDragSeekAtRef.current = now;
+      pendingDragSeekRef.current = null;
+      if (dragSeekTimeoutRef.current !== null) {
+        clearTimeout(dragSeekTimeoutRef.current);
+        dragSeekTimeoutRef.current = null;
+      }
+      seekAllTo(clamped);
+      return;
+    }
+
+    pendingDragSeekRef.current = clamped;
+    if (dragSeekTimeoutRef.current === null) {
+      dragSeekTimeoutRef.current = setTimeout(() => {
+        dragSeekTimeoutRef.current = null;
+        if (pendingDragSeekRef.current !== null) {
+          lastDragSeekAtRef.current = performance.now();
+          seekAllTo(pendingDragSeekRef.current);
+          pendingDragSeekRef.current = null;
+        }
+      }, SCRUB_DRAG_SEEK_THROTTLE_MS - sinceLastSeek);
+    }
   }
 
   function handleSkip(deltaSeconds: number) {
@@ -605,6 +682,28 @@ export function ReviewScreen({
     setClips((prev) =>
       prev.map((c) => (c.id === clipId ? { ...c, manualOffsetSeconds: seconds } : c)),
     );
+  }
+
+  // Duplicates a clip so it can occupy a second, independent grid location
+  // — same underlying file (never copied on disk, just a second reference
+  // to the same filePath), but its own id/offsets/mute/volume/zoom going
+  // forward, same as any other two distinct clips. Starts as an exact copy
+  // (including offsets) so it initially plays in lockstep with the
+  // original; nothing stops the user from then nudging or zooming it
+  // independently. Removing a duplicate is the same "remove a clip" flow
+  // as any other clip, back on the import screen — nothing special needed
+  // here for that.
+  function handleDuplicateClip(clipId: string) {
+    const original = clips.find((c) => c.id === clipId);
+    if (!original) return;
+    const baseLabel = original.description.trim() !== "" ? original.description : original.fileName;
+    const duplicate: VideoClip = {
+      ...original,
+      id: crypto.randomUUID(),
+      description: `(copy) ${baseLabel}`,
+      gridPosition: clips.length,
+    };
+    setClips((prev) => [...prev, duplicate]);
   }
 
   function handleToggleMute(clipId: string) {
@@ -868,6 +967,18 @@ export function ReviewScreen({
                 <span className="text-sm text-neutral-300 whitespace-nowrap">
                   Click videos to sync — {audioSyncSelectedIds.length} selected
                 </span>
+                <select
+                  value={audioSyncSearchWindowSeconds}
+                  onChange={(e) => setAudioSyncSearchWindowSeconds(Number(e.target.value))}
+                  title="How far either side of each clip's current position to search. A narrower window is less likely to lock onto a spurious match far from where you've placed the clips — widen it only if you're not confident they're already close."
+                  className="rounded-md bg-neutral-900 hover:bg-neutral-700 text-sm px-2 py-1 outline-none border border-neutral-700 focus:border-blue-500"
+                >
+                  {AUDIO_SYNC_SEARCH_WINDOW_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      ±{opt.label}
+                    </option>
+                  ))}
+                </select>
                 <button
                   onClick={exitAudioSyncSelection}
                   className="rounded-md px-2.5 py-1 text-sm hover:bg-neutral-700 transition-colors"
@@ -988,6 +1099,7 @@ export function ReviewScreen({
             onDropClip={() => {}}
             zoomByClip={zoomByClip}
             onZoomChange={handleZoomChange}
+            onDuplicate={handleDuplicateClip}
           />
         )}
         {!isSingleClip && viewMode === "grid" && (
@@ -1006,6 +1118,7 @@ export function ReviewScreen({
             audioSyncSelecting={audioSyncSelecting}
             audioSyncSelectedIds={audioSyncSelectedIds}
             onToggleAudioSyncSelected={toggleAudioSyncSelected}
+            onDuplicate={handleDuplicateClip}
           />
         )}
         {!isSingleClip && (viewMode === "focus1" || viewMode === "focus2") && (
@@ -1025,6 +1138,7 @@ export function ReviewScreen({
             audioSyncSelecting={audioSyncSelecting}
             audioSyncSelectedIds={audioSyncSelectedIds}
             onToggleAudioSyncSelected={toggleAudioSyncSelected}
+            onDuplicate={handleDuplicateClip}
           />
         )}
         {!isSingleClip && viewMode === "dynamic" && (
@@ -1045,6 +1159,7 @@ export function ReviewScreen({
             audioSyncSelecting={audioSyncSelecting}
             audioSyncSelectedIds={audioSyncSelectedIds}
             onToggleAudioSyncSelected={toggleAudioSyncSelected}
+            onDuplicate={handleDuplicateClip}
           />
         )}
       </div>
@@ -1223,7 +1338,7 @@ export function ReviewScreen({
             max={timelineEnd}
             step={0.1}
             value={globalTime}
-            onChange={(e) => handleScrub(Number(e.target.value))}
+            onChange={(e) => handleScrubDrag(Number(e.target.value))}
             className="w-full"
           />
           {loopRegion && (
