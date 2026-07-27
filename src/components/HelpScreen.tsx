@@ -1,6 +1,7 @@
 import {
   AudioWaveform,
   Bookmark,
+  CircleHelp,
   Columns2,
   Keyboard,
   LayoutDashboard,
@@ -104,6 +105,13 @@ export function HelpScreen() {
             it front and center. In Dynamic grid, drag videos between the main area and the
             sidebar to choose what's showing.
           </p>
+          <p>
+            Right-click a video and choose <strong>Duplicate</strong> to add a second copy of it
+            in its own spot — handy for watching the same footage two ways at once, like one
+            zoomed on a detail while the other shows the full frame. Both point at the same file
+            on disk (nothing is copied), but play, sync, and zoom independently from then on. To
+            remove a copy later, go back to the import screen and remove it like any other video.
+          </p>
         </Section>
 
         <Section icon={<SlidersHorizontal size={17} />} title="Fine-tuning sync by hand">
@@ -121,10 +129,14 @@ export function HelpScreen() {
           <p>
             If two or more videos have audio, the <strong>Sync by audio</strong> button (top
             right, once your videos are roughly synced) asks you to click the videos you want
-            compared against each other — click each one (a checkmark appears), then{" "}
-            <strong>Sync</strong>. It listens just before and after wherever those clips are
-            currently synced, so it works even when the moment is deep into a long recording.
-            Everything happens on your computer — nothing is uploaded anywhere.
+            compared against each other — click each one (a checkmark appears). Before you hit{" "}
+            <strong>Sync</strong>, a dropdown lets you choose how far either side of where the
+            clips currently sit to search (5s, 30s, or 5m). A narrower search is less likely to
+            lock onto a coincidental match far from where you've placed the clips — pick a wider
+            one only if you're not confident they're already close to lined up. It listens just
+            before and after wherever those clips are currently synced within that range, so it
+            works even when the moment is deep into a long recording. Everything happens on your
+            computer — nothing is uploaded anywhere.
           </p>
           <p>
             It only ever suggests an offset. The new alignment is applied right away so you can
@@ -186,6 +198,59 @@ export function HelpScreen() {
               </div>
             ))}
           </div>
+        </Section>
+
+        <Section icon={<CircleHelp size={17} />} title="Troubleshooting">
+          <p>
+            <strong>A video won't import, or shows a red error message.</strong> DiscoSync plays
+            video the same way a web browser does, so it only understands standard video files —
+            the kind most phones, body cams, and dash cams produce (MP4, MOV). Older formats like
+            AVI, sometimes used by older security DVR systems, aren't supported. Convert the file
+            to MP4 with any video converter first, then import the converted copy — your original
+            file is never touched either way.
+          </p>
+          <p>
+            <strong>A red error appears next to a video that used to work fine.</strong> This
+            usually means the file was moved, renamed, or is on a drive that isn't connected right
+            now. Click <strong>Relink…</strong> next to it and point to the file's new location.
+          </p>
+          <p>
+            <strong>Start Review won't turn on.</strong> A single video doesn't need a start time.
+            Two or more videos each need a valid start time-of-day (like{" "}
+            <span className="text-neutral-300">14:32:05</span>) entered before you can begin.
+          </p>
+          <p>
+            <strong>A video looks faded or see-through, or says it's out of range.</strong> That
+            means it hasn't started yet, or has already ended, at the point you're currently
+            viewing — expected once clips have different lengths or start times. It clears up on
+            its own once playback reaches that clip's actual footage.
+          </p>
+          <p>
+            <strong>The videos still don't look lined up, even though the start times are right.
+            </strong>{" "}
+            Camera clocks are often a few seconds (sometimes more) off from each other even when
+            the recorded start time is correct. Use the nudge buttons to fine-tune by hand, or try{" "}
+            <strong>Sync by audio</strong> if the clips share audio.
+          </p>
+          <p>
+            <strong>Sync by audio says low confidence, or couldn't find a match.</strong> That
+            doesn't mean anything is broken — it means the audio in the two clips isn't similar
+            enough to be confident they're the same moment (each camera's microphone mostly picks
+            up its own surroundings). Nudge the offset by hand instead, or try a different pair of
+            clips.
+          </p>
+          <p>
+            <strong>Windows says "Windows protected your PC" or Microsoft Defender SmartScreen
+            blocked this app.</strong> This shows up because the app isn't yet digitally signed
+            with a certificate Microsoft recognizes — it doesn't mean anything is wrong with the
+            download. Click <strong>More info</strong>, then <strong>Run anyway</strong>.
+          </p>
+          <p>
+            <strong>macOS says the app is from an unidentified developer, or can't be opened.
+            </strong>{" "}
+            Same idea as the Windows warning above. Right-click (or Control-click) the app and
+            choose <strong>Open</strong>, then confirm — this only needs to be done the first time.
+          </p>
         </Section>
       </div>
     </div>
