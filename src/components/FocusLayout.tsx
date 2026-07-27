@@ -30,6 +30,7 @@ interface FocusLayoutProps {
   audioSyncSelecting?: boolean;
   audioSyncSelectedIds?: string[];
   onToggleAudioSyncSelected?: (clipId: string) => void;
+  onDuplicate?: (clipId: string) => void;
 }
 
 const DRAG_MIME_TYPE = "application/x-discosync-clip-id";
@@ -50,6 +51,7 @@ export function FocusLayout({
   audioSyncSelecting = false,
   audioSyncSelectedIds = [],
   onToggleAudioSyncSelected,
+  onDuplicate,
 }: FocusLayoutProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -151,6 +153,7 @@ export function FocusLayout({
         }
         audioSyncSelectable={selectableNow}
         audioSyncSelected={audioSyncSelectedIds.includes(clip.id)}
+        onDuplicate={onDuplicate}
         onToggleZoom={isTileZoomable ? () => zoom.toggle(clip.id) : undefined}
         zoomActive={tileZoomed}
         overlayFadesOnLeave={tileZoomed}

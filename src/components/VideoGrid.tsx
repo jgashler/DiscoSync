@@ -23,6 +23,7 @@ interface VideoGridProps {
   audioSyncSelecting?: boolean;
   audioSyncSelectedIds?: string[];
   onToggleAudioSyncSelected?: (clipId: string) => void;
+  onDuplicate?: (clipId: string) => void;
 }
 
 const DRAG_MIME_TYPE = "application/x-discosync-clip-id";
@@ -42,6 +43,7 @@ export function VideoGrid({
   audioSyncSelecting = false,
   audioSyncSelectedIds = [],
   onToggleAudioSyncSelected,
+  onDuplicate,
 }: VideoGridProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -104,6 +106,7 @@ export function VideoGrid({
             }
             audioSyncSelectable={audioSyncSelecting && clipSynced}
             audioSyncSelected={audioSyncSelectedIds.includes(clip.id)}
+            onDuplicate={onDuplicate}
             // With only 1-2 tiles, each one is already large enough that
             // magnify-on-hover doesn't add anything — it only earns its
             // keep once the grid is dense enough to make a tile small.

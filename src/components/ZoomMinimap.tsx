@@ -96,12 +96,19 @@ export function ZoomMinimap({ videoEl, nativeAspect, center, level, onChange }: 
 
   return (
     <div
-      className="flex flex-col gap-1 items-start pointer-events-auto"
+      className="flex flex-col gap-1 items-start pointer-events-auto [-webkit-user-drag:none]"
       // The tile this sits on top of is itself draggable (for reordering
       // clips). A native dragstart fires *on the draggable ancestor*, not
       // here, so it can't be intercepted from this element — VideoTile's
       // handleDragStart checks for this marker on the event target instead
-      // and cancels the drag before it starts.
+      // and cancels the drag before it starts. That check is a race against
+      // the browser's own drag-gesture recognition (pointerdown must fire,
+      // and be handled, before dragstart commits) — WebKit (macOS's
+      // WKWebView) has been observed losing that race occasionally, where
+      // Chromium (Windows) doesn't. -webkit-user-drag (above) is a second,
+      // independent line of defense WebKit specifically honors — a no-op
+      // everywhere else — so a native drag never starts here in the first
+      // place rather than relying solely on the timing race to cancel it.
       data-no-tile-drag="true"
     >
       <div className="flex items-center gap-1 bg-black/70 rounded px-1 py-0.5">

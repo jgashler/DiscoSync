@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DragEvent, ReactNode, SyntheticEvent } from "react";
-import { Check, ChevronLeft, ChevronRight, Volume2, VolumeX, ZoomIn, ZoomOut } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, Volume2, VolumeX, ZoomIn, ZoomOut } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { frameStepSeconds, NUDGE_STEPS } from "../lib/fineTune";
 import { computeClipRangeStatus } from "../lib/clipRange";
@@ -62,6 +62,8 @@ interface VideoTileProps {
   /** True while picking clips for audio sync and this one is eligible (synced) — shows a checkable highlight. */
   audioSyncSelectable?: boolean;
   audioSyncSelected?: boolean;
+  /** When provided, right-clicking the tile shows a context menu with a Duplicate option. */
+  onDuplicate?: (clipId: string) => void;
 }
 
 export function VideoTile({
@@ -91,6 +93,7 @@ export function VideoTile({
   zoomActive = false,
   audioSyncSelectable = false,
   audioSyncSelected = false,
+  onDuplicate,
 }: VideoTileProps) {
   const step = frameStepSeconds(clip.frameRate);
   const rangeStatus = computeClipRangeStatus(effectiveOffsetSeconds, clip.durationSeconds, globalTime);
@@ -104,6 +107,7 @@ export function VideoTile({
   // where the gesture originated.
   const suppressDragRef = useRef(false);
   const [videoNativeSize, setVideoNativeSize] = useState<{ width: number; height: number } | null>(null);
+  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
 
   // Stable across re-renders (as long as the clip and callback identity
   // don't change) — an inline `ref={(el) => ...}` gets a *new* function every
@@ -237,6 +241,14 @@ export function VideoTile({
         onDrop={onDrop}
         onDragEnd={onDragEnd}
         onClick={onClick}
+        onContextMenu={
+          onDuplicate
+            ? (e) => {
+                e.preventDefault();
+                setContextMenuPos({ x: e.clientX, y: e.clientY });
+              }
+            : undefined
+        }
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
         style={
@@ -301,7 +313,11 @@ export function VideoTile({
         {!compact && (
           <div
             data-no-tile-drag="true"
-            className="absolute top-1 right-1 flex items-center gap-1.5 px-1.5 py-1 bg-black/60 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+            // See the matching comment in ZoomMinimap — -webkit-user-drag
+            // is a second, WebKit-specific line of defense against the
+            // tile's own drag starting from inside this overlay, alongside
+            // the suppressDragRef timing-based check below.
+            className="absolute top-1 right-1 flex items-center gap-1.5 px-1.5 py-1 bg-black/60 rounded opacity-0 group-hover:opacity-100 transition-opacity [-webkit-user-drag:none]"
           >
             {onToggleZoom && (
               <button
@@ -404,6 +420,33 @@ export function VideoTile({
             </button>
           ))}
         </div>
+      )}
+      {contextMenuPos && onDuplicate && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setContextMenuPos(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setContextMenuPos(null);
+            }}
+          />
+          <div
+            style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
+            className="fixed z-50 bg-neutral-900 border border-neutral-800 rounded-md shadow-xl p-1 text-sm"
+          >
+            <button
+              onClick={() => {
+                onDuplicate(clip.id);
+                setContextMenuPos(null);
+              }}
+              className="flex items-center gap-2 w-full rounded px-2 py-1.5 hover:bg-neutral-800 transition-colors text-left whitespace-nowrap"
+            >
+              <Copy size={13} />
+              Duplicate
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
