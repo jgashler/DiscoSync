@@ -18,6 +18,8 @@ angles of the same event, side by side, in perfect sync.
 - **Drag and drop to rearrange.**
 - **Fine-tune sync by hand**: When a video looks slightly out of step, adjust one
   frame at a time.
+- **Sync videos based on shared audio**: DiscoSync looks at the raw sound waves and 
+  figures out exactly how to line up videos
 - **Slow down to a crawl (one frame per second) or speed up to 16x.**
 - **Zoom into video**
 - **Bookmark important moments** and jump straight back to them.
@@ -27,7 +29,7 @@ angles of the same event, side by side, in perfect sync.
 
 ## Install
 
-See releases for the latest build. Currently Windows only.
+See [Releases](https://github.com/jgashler/DiscoSync/releases) for the latest build.
 
 ## Development Setup
 
@@ -41,9 +43,7 @@ npm run tauri dev
 - [Node.js](https://nodejs.org/) 18+
 - [Rust toolchain](https://www.rust-lang.org/tools/install) (via `rustup`),
   required by Tauri to build the native backend.
-- Platform build tools per the [Tauri prerequisites guide](https://tauri.app/start/prerequisites/)
-  (on Windows: the MSVC C++ build tools / Visual Studio Build Tools, and
-  WebView2, which ships with Windows 10/11 by default).
+- Platform build tools per the [Tauri prerequisites guide](https://tauri.app/start/prerequisites/).
 
 ## Project layout
 
